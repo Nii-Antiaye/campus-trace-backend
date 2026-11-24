@@ -20,6 +20,7 @@ from typing import Annotated, Any, Generator, Optional
 
 import jwt
 import qrcode
+from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -31,6 +32,7 @@ from pwdlib import PasswordHash
 from sqlalchemy import JSON, Column, DateTime, Enum as SAEnum, UniqueConstraint, event
 from sqlmodel import Field, Relationship, Session, SQLModel, create_engine, select
 
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 # app configuration
 SECRET_KEY = os.getenv(
