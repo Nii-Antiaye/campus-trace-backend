@@ -421,6 +421,10 @@ app.add_middleware(
         ).split(",")
         if origin.strip()
     ],
+    allow_origin_regex=os.getenv(
+        "CAMPUS_TRACE_CORS_ORIGIN_REGEX",
+        r"https://campus-trace(?:-[a-z0-9]+)?\.onrender\.com",
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
