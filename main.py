@@ -6,6 +6,9 @@ import re
 import typer
 import smtplib
 import logging
+import json
+import urllib.request
+import urllib.error
 from html import escape
 from email.message import EmailMessage
 from email.utils import formataddr
@@ -65,6 +68,7 @@ SMTP_USERNAME = os.getenv("CAMPUS_TRACE_SMTP_USERNAME", "")
 SMTP_PASSWORD = os.getenv("CAMPUS_TRACE_SMTP_PASSWORD", "")
 SMTP_FROM = os.getenv("CAMPUS_TRACE_SMTP_FROM", SMTP_USERNAME or "no-reply@campustrace.local")
 SMTP_USE_TLS = os.getenv("CAMPUS_TRACE_SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
+RESEND_API_KEY = os.getenv("CAMPUS_TRACE_RESEND_API_KEY", "")
 
 logger = logging.getLogger("campus_trace")
 
@@ -1201,20 +1205,57 @@ def render_claim_decision_email_html(claim: Claim, approved: bool) -> str:
 
 
 def send_claim_decision_email(claim: Claim, approved: bool) -> None:
-    if not SMTP_HOST or not claim.email:
+    if not claim.email:
         return
     item_title = claim.item.title if claim.item else "your item"
     status_text = "approved" if approved else "not approved"
-    msg = EmailMessage()
-    msg["Subject"] = f"Campus Trace: Claim update for {item_title}"
-    msg["From"] = formataddr(("Campus Trace", SMTP_FROM))
-    msg["To"] = claim.email
-    msg.set_content(
+    subject = f"Campus Trace: Claim update for {item_title}"
+    text = (
         f"Hi {claim.full_name},\n\nYour claim for {item_title} was {status_text}. "
         + ("Wait for pickup instructions from the desk." if approved else "You may continue checking the catalogue for other matching items.")
         + "\n\nCampus Trace"
     )
-    msg.add_alternative(render_claim_decision_email_html(claim, approved), subtype="html")
+    html = render_claim_decision_email_html(claim, approved)
+    resend_key = RESEND_API_KEY or (
+        SMTP_PASSWORD if SMTP_HOST == "smtp.resend.com" and SMTP_USERNAME == "resend" else ""
+    )
+    if resend_key:
+        payload = json.dumps(
+            {
+                "from": f"Campus Trace <{SMTP_FROM}>",
+                "to": [claim.email],
+                "subject": subject,
+                "text": text,
+                "html": html,
+            }
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            "https://api.resend.com/emails",
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {resend_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "Campus-Trace/1.0",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                if response.status not in {200, 201, 202}:
+                    raise RuntimeError(f"Resend returned HTTP {response.status}")
+            return
+        except (urllib.error.URLError, urllib.error.HTTPError, RuntimeError) as exc:
+            logger.warning("Resend email failed for claim %s: %s", claim.id, exc)
+            return
+    if not SMTP_HOST:
+        logger.warning("Email provider is not configured for claim %s", claim.id)
+        return
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = formataddr(("Campus Trace", SMTP_FROM))
+    msg["To"] = claim.email
+    msg.set_content(text)
+    msg.add_alternative(html, subtype="html")
     try:
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
             if SMTP_USE_TLS:

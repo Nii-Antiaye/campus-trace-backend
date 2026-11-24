@@ -36,6 +36,8 @@ services:
         sync: false
       - key: CAMPUS_TRACE_SMTP_USE_TLS
         value: "true"
+      - key: CAMPUS_TRACE_RESEND_API_KEY
+        sync: false
     disk:
       name: campus-trace-data
       mountPath: /var/data
