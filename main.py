@@ -71,6 +71,9 @@ SMTP_PASSWORD = os.getenv("CAMPUS_TRACE_SMTP_PASSWORD", "")
 SMTP_FROM = os.getenv("CAMPUS_TRACE_SMTP_FROM", SMTP_USERNAME or "no-reply@campustrace.local")
 SMTP_USE_TLS = os.getenv("CAMPUS_TRACE_SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
 RESEND_API_KEY = os.getenv("CAMPUS_TRACE_RESEND_API_KEY", "")
+BREVO_API_KEY = os.getenv("CAMPUS_TRACE_BREVO_API_KEY", "")
+BREVO_FROM_EMAIL = os.getenv("CAMPUS_TRACE_BREVO_FROM_EMAIL", "")
+BREVO_FROM_NAME = os.getenv("CAMPUS_TRACE_BREVO_FROM_NAME", "Campus Trace")
 
 logger = logging.getLogger("campus_trace")
 
@@ -1218,6 +1221,46 @@ def send_claim_decision_email(claim: Claim, approved: bool) -> None:
         + "\n\nCampus Trace"
     )
     html = render_claim_decision_email_html(claim, approved)
+    if BREVO_API_KEY:
+        if not BREVO_FROM_EMAIL:
+            logger.warning("Brevo sender email is not configured for claim %s", claim.id)
+            return
+        payload = json.dumps(
+            {
+                "sender": {
+                    "name": BREVO_FROM_NAME,
+                    "email": BREVO_FROM_EMAIL,
+                },
+                "to": [
+                    {
+                        "name": claim.full_name,
+                        "email": claim.email,
+                    }
+                ],
+                "subject": subject,
+                "textContent": text,
+                "htmlContent": html,
+            }
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            "https://api.brevo.com/v3/smtp/email",
+            data=payload,
+            headers={
+                "api-key": BREVO_API_KEY,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "Campus-Trace/1.0",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                if response.status not in {200, 201, 202}:
+                    raise RuntimeError(f"Brevo returned HTTP {response.status}")
+            return
+        except (urllib.error.URLError, urllib.error.HTTPError, RuntimeError) as exc:
+            logger.warning("Brevo email failed for claim %s: %s", claim.id, exc)
+            return
     resend_key = RESEND_API_KEY or (
         SMTP_PASSWORD if SMTP_HOST == "smtp.resend.com" and SMTP_USERNAME == "resend" else ""
     )

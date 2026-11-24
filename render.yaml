@@ -38,6 +38,12 @@ services:
         value: "true"
       - key: CAMPUS_TRACE_RESEND_API_KEY
         sync: false
+      - key: CAMPUS_TRACE_BREVO_API_KEY
+        sync: false
+      - key: CAMPUS_TRACE_BREVO_FROM_EMAIL
+        sync: false
+      - key: CAMPUS_TRACE_BREVO_FROM_NAME
+        value: Campus Trace
     disk:
       name: campus-trace-data
       mountPath: /var/data
