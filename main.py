@@ -1600,6 +1600,19 @@ def catalogue_entry(item):
             "location_found": item.location_found, "found_at": item.found_at,
             "public_description": item.public_description}
 
+
+def lost_search_entry(report: LostReport):
+    return {
+        "id": report.id,
+        "item_name": report.item_name,
+        "category": report.category,
+        "description": report.description,
+        "last_seen_location": report.last_seen_location,
+        "lost_at": report.lost_at,
+        "reported_at": report.created_at,
+    }
+
+
 def published_item(session, item_id):
     item = session.exec(select(Item).where(Item.id == item_id, Item.status == ItemStatus.PUBLISHED)).first()
     if not item:
@@ -1618,6 +1631,32 @@ def public_item(item_id: uuid.UUID, session: Annotated[Session, Depends(get_sess
         {"id": q.id, "question": q.question, "is_required": q.is_required}
         for q in sorted(item.verification_questions, key=lambda q: q.sort_order)
     ]}
+
+
+@app.get("/public/lost-items")
+def public_lost_searches(session: Annotated[Session, Depends(get_session)]):
+    reports = session.exec(
+        select(LostReport)
+        .where(LostReport.status == LostReportStatus.OPEN)
+        .order_by(LostReport.created_at.desc())
+    )
+    return [lost_search_entry(report) for report in reports]
+
+
+@app.get("/public/lost-items/{report_id}")
+def public_lost_search(
+    report_id: uuid.UUID,
+    session: Annotated[Session, Depends(get_session)],
+):
+    report = session.exec(
+        select(LostReport).where(
+            LostReport.id == report_id,
+            LostReport.status == LostReportStatus.OPEN,
+        )
+    ).first()
+    if not report:
+        raise HTTPException(404, "This lost-item search is no longer active.")
+    return lost_search_entry(report)
 
 @app.post("/public/items/{item_id}/claims", status_code=201)
 def submit_ownership_claim(item_id: uuid.UUID, body: OwnershipInput, session: Annotated[Session, Depends(get_session)]):
