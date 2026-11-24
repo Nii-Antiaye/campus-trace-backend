@@ -18,6 +18,12 @@ services:
         sync: false
       - key: CAMPUS_TRACE_CORS_ORIGINS
         sync: false
+      - key: CAMPUS_TRACE_BOOTSTRAP_ADMIN_NAME
+        sync: false
+      - key: CAMPUS_TRACE_BOOTSTRAP_ADMIN_EMAIL
+        sync: false
+      - key: CAMPUS_TRACE_BOOTSTRAP_ADMIN_PASSWORD
+        sync: false
       - key: CAMPUS_TRACE_SMTP_HOST
         sync: false
       - key: CAMPUS_TRACE_SMTP_PORT

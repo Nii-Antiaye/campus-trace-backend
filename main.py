@@ -380,9 +380,31 @@ def get_session() -> Generator[Session, None, None]:
     with Session(engine) as session:
         yield session
 
+def create_bootstrap_admin() -> None:
+    email = os.getenv("CAMPUS_TRACE_BOOTSTRAP_ADMIN_EMAIL", "").strip().lower()
+    password = os.getenv("CAMPUS_TRACE_BOOTSTRAP_ADMIN_PASSWORD", "")
+    full_name = os.getenv("CAMPUS_TRACE_BOOTSTRAP_ADMIN_NAME", "").strip()
+    if not email or not password or not full_name:
+        return
+    with Session(engine) as session:
+        existing = session.exec(select(AdminUser).where(AdminUser.email == email)).first()
+        if existing:
+            return
+        session.add(
+            AdminUser(
+                full_name=full_name,
+                email=email,
+                hashed_password=password_hash.hash(password),
+                role=AdminRole.SUPER_ADMIN,
+            )
+        )
+        session.commit()
+        logger.info("Created bootstrap super administrator %s", email)
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     create_db_and_tables()
+    create_bootstrap_admin()
     yield
 
 
