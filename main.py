@@ -29,7 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from jwt.exceptions import InvalidTokenError
 from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
 from pwdlib import PasswordHash
-from sqlalchemy import JSON, Column, DateTime, Enum as SAEnum, UniqueConstraint, event
+from sqlalchemy import JSON, Column, DateTime, Enum as SAEnum, UniqueConstraint, event, inspect
 from sqlmodel import Field, Relationship, Session, SQLModel, create_engine, select
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
@@ -237,6 +237,7 @@ class LostReport(TimestampMixin, ContactMixin, table=True):
         default=LostReportStatus.OPEN,
         sa_column=enum_column(LostReportStatus),
     )
+    published_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     claims: list["Claim"] = Relationship(back_populates="lost_report")
 
 class Item(TimestampMixin, table=True):
@@ -384,6 +385,10 @@ def enable_sqlite_foreign_keys(dbapi_connection: Any, _: Any) -> None:
 
 def create_db_and_tables() -> None:
     SQLModel.metadata.create_all(engine)
+    columns = {column["name"] for column in inspect(engine).get_columns("lost_reports")}
+    if "published_at" not in columns:
+        with engine.begin() as connection:
+            connection.exec_driver_sql("ALTER TABLE lost_reports ADD COLUMN published_at DATETIME")
 
 def get_session() -> Generator[Session, None, None]:
     with Session(engine) as session:
@@ -652,6 +657,7 @@ def lost_report_data(report: LostReport) -> dict[str, Any]:
         "distinguishing_features": report.distinguishing_features,
         "additional_notes": report.additional_notes,
         "status": report.status,
+        "published_at": report.published_at,
         "claim_count": len(report.claims),
         "created_at": report.created_at,
         "updated_at": report.updated_at,
@@ -1157,6 +1163,43 @@ def update_lost_report_status(
     session.commit()
     session.refresh(report)
     return lost_report_data(report)
+
+
+@app.post("/admin/reports/lost/{report_id}/publish")
+def publish_lost_report(
+    report_id: uuid.UUID,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    session: Annotated[Session, Depends(get_session)],
+):
+    report = session.get(LostReport, report_id)
+    if not report:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lost report not found")
+    if report.status != LostReportStatus.OPEN:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only open lost reports can be published")
+    if report.published_at:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This lost report is already published")
+    report.published_at = utc_now()
+    session.add(report)
+    session.add(
+        Log(
+            admin_id=current_admin.id,
+            action=LogAction.PUBLISHED,
+            entity=LogEntity.LOST_REPORT,
+            entity_id=report.id,
+            description=f"Published lost-item search for {report.item_name}",
+        )
+    )
+    add_notification(
+        session,
+        title="Lost search published",
+        message=f"{report.item_name} is now visible in the lost-items catalogue.",
+        notification_type=NotificationType.SUCCESS,
+        event_type=NotificationEvent.ITEM_PUBLISHED,
+    )
+    session.commit()
+    session.refresh(report)
+    return lost_report_data(report)
+
 
 @app.get("/admin/claims")
 def get_claims(
@@ -1680,7 +1723,10 @@ def public_item(item_id: uuid.UUID, session: Annotated[Session, Depends(get_sess
 def public_lost_searches(session: Annotated[Session, Depends(get_session)]):
     reports = session.exec(
         select(LostReport)
-        .where(LostReport.status == LostReportStatus.OPEN)
+        .where(
+            LostReport.status == LostReportStatus.OPEN,
+            LostReport.published_at.is_not(None),
+        )
         .order_by(LostReport.created_at.desc())
     )
     return [lost_search_entry(report) for report in reports]
@@ -1695,6 +1741,7 @@ def public_lost_search(
         select(LostReport).where(
             LostReport.id == report_id,
             LostReport.status == LostReportStatus.OPEN,
+            LostReport.published_at.is_not(None),
         )
     ).first()
     if not report:
